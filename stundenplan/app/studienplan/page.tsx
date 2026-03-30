@@ -59,7 +59,7 @@ export default function StudienplanPage() {
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
 
-  useEffect(() => {
+    useEffect(() => {
     const login = Cookies.get("login");
     const passwort = Cookies.get("passwort");
 
@@ -95,7 +95,6 @@ export default function StudienplanPage() {
 
     stundenplanLaden(login, passwort, 17);
   }, [router]);
-
   function istHeute(tagKurz: string): boolean {
     // Nur wenn wir wissen, welche Woche aktuell ist
     if (!aktuelleWocheInfo) return false;
