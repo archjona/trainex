@@ -10,6 +10,8 @@ import re
 import time
 import concurrent.futures
 import secrets
+import sqlite3
+import os
 
 app = FastAPI()
 
@@ -46,16 +48,59 @@ for i in range(13):
         "label": montag.strftime("%d.%m.%Y"),
     })
 
-# { token: { "login": ..., "passwort": ..., "ts": ... } }
-token_store: dict = {}
-# { login: { "session": ..., "tok": ..., ... "ts": ... } }
+# --- Datenbank für Token ---
+DB_PATH = os.path.join(os.path.dirname(__file__), "tokens.db")
+TOKEN_TTL = 60 * 60 * 24 * 30   # 30 Tage
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tokens (
+            token TEXT PRIMARY KEY,
+            login TEXT NOT NULL,
+            passwort TEXT NOT NULL,
+            ts REAL NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_token(token: str, login: str, passwort: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO tokens VALUES (?, ?, ?, ?)",
+              (token, login, passwort, time.time()))
+    conn.commit()
+    conn.close()
+
+def get_credentials(token: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT login, passwort, ts FROM tokens WHERE token = ?", (token,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=401, detail="Ungültiger Token")
+    login, passwort, ts = row
+    if (time.time() - ts) > TOKEN_TTL:
+        # Token löschen
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM tokens WHERE token = ?", (token,))
+        conn.commit()
+        conn.close()
+        raise HTTPException(status_code=401, detail="Token abgelaufen")
+    return login, passwort
+
+init_db()
+
+# --- Session‑Cache (für PHWT‑Sitzung) ---
 session_cache: dict = {}
 stundenplan_cache: dict = {}
 
-TOKEN_TTL = 60 * 60 * 24 * 30   # 30 Tage
 SESSION_TTL = 60 * 20            # 20 Minuten
 STUNDENPLAN_TTL = 60 * 60        # 1 Stunde
-
 
 class LoginData(BaseModel):
     token: str
@@ -67,17 +112,6 @@ class LoginRequest(BaseModel):
 
 class CacheData(BaseModel):
     token: str
-
-
-def get_credentials(token: str):
-    entry = token_store.get(token)
-    if not entry:
-        raise HTTPException(status_code=401, detail="Ungültiger oder abgelaufener Token")
-    if (time.time() - entry["ts"]) > TOKEN_TTL:
-        del token_store[token]
-        raise HTTPException(status_code=401, detail="Token abgelaufen")
-    return entry["login"], entry["passwort"]
-
 
 def get_or_create_session(login: str, passwort: str):
     cached = session_cache.get(login)
@@ -133,7 +167,6 @@ def get_or_create_session(login: str, passwort: str):
     }
     session_cache[login] = entry
     return entry
-
 
 def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
     soup = BeautifulSoup(html, "html.parser")
@@ -246,7 +279,6 @@ def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
         ]
     }
 
-
 def fetch_woche(sess_entry: dict, woche_info: dict):
     cache_key = f"{sess_entry['kid']}:{woche_info['woche']}"
     cached = stundenplan_cache.get(cache_key)
@@ -272,21 +304,14 @@ def fetch_woche(sess_entry: dict, woche_info: dict):
         stundenplan_cache[cache_key] = {"data": data, "ts": time.time()}
     return woche_info["woche"], data
 
-
 @app.post("/login")
 def login(data: LoginRequest):
     # Erst prüfen ob Login gültig ist
     get_or_create_session(data.login, data.passwort)
-
     # Token generieren und speichern
     token = secrets.token_urlsafe(32)
-    token_store[token] = {
-        "login": data.login,
-        "passwort": data.passwort,
-        "ts": time.time(),
-    }
+    save_token(token, data.login, data.passwort)
     return {"token": token}
-
 
 @app.post("/stundenplan")
 def get_stundenplan(data: LoginData):
@@ -311,7 +336,6 @@ def get_stundenplan(data: LoginData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Interner Fehler: {str(e)}")
 
-
 @app.post("/cache-leeren")
 def cache_leeren(data: CacheData):
     login, _ = get_credentials(data.token)
@@ -320,16 +344,13 @@ def cache_leeren(data: CacheData):
     stundenplan_cache.clear()
     return {"status": "ok"}
 
-
 @app.get("/wochen")
 def get_wochen():
     return WOCHEN
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 @app.options("/login")
 async def options_login():
