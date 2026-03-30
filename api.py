@@ -233,7 +233,12 @@ def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
             if "adress_bild" in onclick:
                 dozent = link.get_text(strip=True)
             elif "ressourcen_beschreibung" in onclick:
-                raum = link.get_text(separator=" ", strip=True)
+                raum_text = link.get_text(separator=" ", strip=True)
+                # Entferne nur Zusätze in Klammern wie "(Hörsaal)" oder "(Vorlesungsraum)"
+                # Aber lasse "Online" und andere virtuelle Räume unberührt
+                raum = re.sub(r'\s*\([^)]*\)', '', raum_text).strip()
+                if not raum:
+                    raum = raum_text
         return {
             "tag": get_tag(cell),
             "zeit": zeit,
