@@ -14,7 +14,7 @@ interface Vorlesung {
 
 interface Tag {
   tag: string;
-  datum: string;
+  datum: string;          // wird vom Backend geliefert
   vorlesungen: Vorlesung[];
 }
 
@@ -60,15 +60,16 @@ export default function StudienplanPage() {
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
 
-  useEffect(() => {
-    const login = Cookies.get("login");
-    const passwort = Cookies.get("passwort");
+  // Token aus Cookie holen
+  const token = Cookies.get("token");
 
-    if (!login || !passwort) {
+  useEffect(() => {
+    if (!token) {
       router.push("/");
       return;
     }
 
+    // Wochen laden
     fetch(`${API_URL}/wochen`)
       .then(res => res.json())
       .then(data => {
@@ -87,8 +88,8 @@ export default function StudienplanPage() {
       })
       .catch(() => setError("Wochen konnten nicht geladen werden."));
 
-    stundenplanLaden(login, passwort, 17);
-  }, [router]);
+    stundenplanLaden(17);
+  }, [router, token]);
 
   function istHeute(tagKurz: string): boolean {
     if (!aktuelleWocheInfo) return false;
@@ -99,7 +100,8 @@ export default function StudienplanPage() {
     return tagIndex === heutigerWochentag;
   }
 
-  function stundenplanLaden(login: string, passwort: string, woche: number) {
+  function stundenplanLaden(woche: number) {
+    if (!token) return;
     setLoading(true);
     setError("");
 
@@ -108,8 +110,16 @@ export default function StudienplanPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token, woche }),
     })
-      .then(res => {
-        if (!res.ok) throw new Error("Fehler beim Laden");
+      .then(async res => {
+        if (!res.ok) {
+          if (res.status === 401) {
+            // Token ungültig → zurück zum Login
+            Cookies.remove("token");
+            router.push("/");
+            throw new Error("Session abgelaufen");
+          }
+          throw new Error("Fehler beim Laden");
+        }
         return res.json();
       })
       .then((data: StundenplanResponse) => {
@@ -118,38 +128,34 @@ export default function StudienplanPage() {
         setWochenLabel(data.label);
         setLoading(false);
       })
-      .catch(() => {
-        setError("Studienplan konnte nicht geladen werden.");
+      .catch(err => {
+        if (err.message !== "Session abgelaufen") {
+          setError("Studienplan konnte nicht geladen werden.");
+        }
         setLoading(false);
       });
   }
 
   async function handleReload() {
-    const login = Cookies.get("login");
-    const passwort = Cookies.get("passwort");
-    if (!login || !passwort) return;
-
+    if (!token) return;
     setReloading(true);
     try {
       await fetch(`${API_URL}/cache-leeren`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login, passwort }),
+        body: JSON.stringify({ token }),
       });
     } catch {
       // trotzdem neu laden
     }
-    stundenplanLaden(login, passwort, aktuelleWoche);
+    stundenplanLaden(aktuelleWoche);
     setReloading(false);
   }
 
   function handleWochenWechsel(woche: number) {
-    const login = Cookies.get("login");
-    const passwort = Cookies.get("passwort");
-    if (login && passwort) {
-      stundenplanLaden(login, passwort, woche);
-      setWochenAuswahlOffen(false);
-    }
+    if (!token) return;
+    stundenplanLaden(woche);
+    setWochenAuswahlOffen(false);
   }
 
   function handleLogout() {
