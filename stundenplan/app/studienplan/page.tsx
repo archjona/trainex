@@ -106,7 +106,7 @@ export default function StudienplanPage() {
     fetch(`${API_URL}/stundenplan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ login, passwort, woche }),
+      body: JSON.stringify({ token, woche }),
     })
       .then(res => {
         if (!res.ok) throw new Error("Fehler beim Laden");
@@ -153,8 +153,7 @@ export default function StudienplanPage() {
   }
 
   function handleLogout() {
-    Cookies.remove("login");
-    Cookies.remove("passwort");
+    Cookies.remove("token");
     router.push("/");
   }
 

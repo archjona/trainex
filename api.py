@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import re
 import time
 import concurrent.futures
+import secrets
 
 app = FastAPI()
 
@@ -45,22 +46,37 @@ for i in range(13):
         "label": montag.strftime("%d.%m.%Y"),
     })
 
+# { token: { "login": ..., "passwort": ..., "ts": ... } }
+token_store: dict = {}
+# { login: { "session": ..., "tok": ..., ... "ts": ... } }
 session_cache: dict = {}
 stundenplan_cache: dict = {}
 
-SESSION_TTL = 60 * 20
-STUNDENPLAN_TTL = 60 * 60
+TOKEN_TTL = 60 * 60 * 24 * 30   # 30 Tage
+SESSION_TTL = 60 * 20            # 20 Minuten
+STUNDENPLAN_TTL = 60 * 60        # 1 Stunde
 
 
 class LoginData(BaseModel):
-    login: str
-    passwort: str
+    token: str
     woche: int = 17
 
-
-class CacheData(BaseModel):
+class LoginRequest(BaseModel):
     login: str
     passwort: str
+
+class CacheData(BaseModel):
+    token: str
+
+
+def get_credentials(token: str):
+    entry = token_store.get(token)
+    if not entry:
+        raise HTTPException(status_code=401, detail="Ungültiger oder abgelaufener Token")
+    if (time.time() - entry["ts"]) > TOKEN_TTL:
+        del token_store[token]
+        raise HTTPException(status_code=401, detail="Token abgelaufen")
+    return entry["login"], entry["passwort"]
 
 
 def get_or_create_session(login: str, passwort: str):
@@ -214,7 +230,6 @@ def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
     for v in vorlesungen:
         nach_tag[v["tag"]].append(v)
 
-    # Wochenbeginn für Datumsberechnung
     wochenbeginn_str = woche_info["datum"].replace("{ts '", "").replace(" 00:00:00'}", "")
     wochenbeginn = date.fromisoformat(wochenbeginn_str)
 
@@ -258,46 +273,39 @@ def fetch_woche(sess_entry: dict, woche_info: dict):
     return woche_info["woche"], data
 
 
-def scrape_stundenplan(login: str, passwort: str, woche: int):
-    woche_info = next((w for w in WOCHEN if w["woche"] == woche), None)
-    if not woche_info:
-        raise HTTPException(status_code=400, detail="Ungültige Woche")
+@app.post("/login")
+def login(data: LoginRequest):
+    # Erst prüfen ob Login gültig ist
+    get_or_create_session(data.login, data.passwort)
 
-    sess_entry = get_or_create_session(login, passwort)
-
-    cache_key = f"{sess_entry['kid']}:{woche}"
-    cached = stundenplan_cache.get(cache_key)
-    if cached and (time.time() - cached["ts"]) < STUNDENPLAN_TTL:
-        return cached["data"]
-
-    _, data = fetch_woche(sess_entry, woche_info)
-    if not data:
-        raise HTTPException(status_code=500, detail="Stundenplan konnte nicht geparst werden")
-    return data
+    # Token generieren und speichern
+    token = secrets.token_urlsafe(32)
+    token_store[token] = {
+        "login": data.login,
+        "passwort": data.passwort,
+        "ts": time.time(),
+    }
+    return {"token": token}
 
 
 @app.post("/stundenplan")
 def get_stundenplan(data: LoginData):
     try:
-        return scrape_stundenplan(data.login, data.passwort, data.woche)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Interner Fehler: {str(e)}")
+        login, passwort = get_credentials(data.token)
+        woche_info = next((w for w in WOCHEN if w["woche"] == data.woche), None)
+        if not woche_info:
+            raise HTTPException(status_code=400, detail="Ungültige Woche")
 
+        sess_entry = get_or_create_session(login, passwort)
+        cache_key = f"{sess_entry['kid']}:{data.woche}"
+        cached = stundenplan_cache.get(cache_key)
+        if cached and (time.time() - cached["ts"]) < STUNDENPLAN_TTL:
+            return cached["data"]
 
-@app.post("/alle-wochen")
-def get_alle_wochen(data: LoginData):
-    try:
-        sess_entry = get_or_create_session(data.login, data.passwort)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            futures = {executor.submit(fetch_woche, sess_entry, w): w for w in WOCHEN}
-            results = {}
-            for future in concurrent.futures.as_completed(futures):
-                woche_nr, d = future.result()
-                if d:
-                    results[woche_nr] = d
-        return results
+        _, result = fetch_woche(sess_entry, woche_info)
+        if not result:
+            raise HTTPException(status_code=500, detail="Stundenplan konnte nicht geparst werden")
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -306,8 +314,9 @@ def get_alle_wochen(data: LoginData):
 
 @app.post("/cache-leeren")
 def cache_leeren(data: CacheData):
-    if data.login in session_cache:
-        del session_cache[data.login]
+    login, _ = get_credentials(data.token)
+    if login in session_cache:
+        del session_cache[login]
     stundenplan_cache.clear()
     return {"status": "ok"}
 
@@ -322,15 +331,13 @@ def health():
     return {"status": "ok"}
 
 
+@app.options("/login")
+async def options_login():
+    return {"message": "OK"}
+
 @app.options("/stundenplan")
 async def options_stundenplan():
     return {"message": "OK"}
-
-
-@app.options("/alle-wochen")
-async def options_alle_wochen():
-    return {"message": "OK"}
-
 
 @app.options("/cache-leeren")
 async def options_cache_leeren():

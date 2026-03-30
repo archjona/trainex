@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 
-// Verwende Environment Variable oder fallback auf localhost
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function LoginPage() {
@@ -19,27 +18,24 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const res = await fetch(`${API_URL}/stundenplan`, {
+      const res = await fetch(`${API_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login, passwort, woche: 17 }), // woche hinzugefügt
+        body: JSON.stringify({ login, passwort }),
       });
 
       if (res.ok) {
-        Cookies.set("login", login, { expires: 365 });
-        Cookies.set("passwort", passwort, { expires: 365 });
+        const data = await res.json();
+        Cookies.set("token", data.token, { expires: 30 });
         router.push("/studienplan");
       } else {
-        const errorText = await res.text();
-        console.error("Login failed:", errorText);
         setError("Login fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.");
       }
-    } catch (err) {
-      console.error("Network error:", err);
-      setError("Verbindungsfehler. Bitte versuche es später erneut.");
-    } finally {
-      setLoading(false);
+    } catch {
+      setError("Server nicht erreichbar.");
     }
+
+    setLoading(false);
   }
 
   return (
@@ -75,9 +71,7 @@ export default function LoginPage() {
             />
           </div>
 
-          {error && (
-            <p className="text-red-400 text-sm mb-4">{error}</p>
-          )}
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
 
           <button
             type="submit"
