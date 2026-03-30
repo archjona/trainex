@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Cookies from "js-cookie";
 
 interface Vorlesung {
   tag: string;
@@ -14,7 +13,7 @@ interface Vorlesung {
 
 interface Tag {
   tag: string;
-  datum: string;          // wird vom Backend geliefert
+  datum: string;
   vorlesungen: Vorlesung[];
 }
 
@@ -60,14 +59,21 @@ export default function StudienplanPage() {
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
 
-  // Token aus Cookie holen
-  const token = Cookies.get("token");
+  // Token aus localStorage holen
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) {
+    // Nur clientseitig auf localStorage zugreifen
+    const storedToken = localStorage.getItem("token");
+    setToken(storedToken);
+    if (!storedToken) {
       router.push("/");
       return;
     }
+  }, [router]);
+
+  useEffect(() => {
+    if (!token) return;
 
     // Wochen laden
     fetch(`${API_URL}/wochen`)
@@ -89,7 +95,7 @@ export default function StudienplanPage() {
       .catch(() => setError("Wochen konnten nicht geladen werden."));
 
     stundenplanLaden(17);
-  }, [router, token]);
+  }, [token]);
 
   function istHeute(tagKurz: string): boolean {
     if (!aktuelleWocheInfo) return false;
@@ -113,8 +119,8 @@ export default function StudienplanPage() {
       .then(async res => {
         if (!res.ok) {
           if (res.status === 401) {
-            // Token ungültig → zurück zum Login
-            Cookies.remove("token");
+            // Token ungültig → löschen und zurück zum Login
+            localStorage.removeItem("token");
             router.push("/");
             throw new Error("Session abgelaufen");
           }
@@ -159,7 +165,7 @@ export default function StudienplanPage() {
   }
 
   function handleLogout() {
-    Cookies.remove("token");
+    localStorage.removeItem("token");
     router.push("/");
   }
 

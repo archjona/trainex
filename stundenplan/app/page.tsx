@@ -1,7 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Cookies from "js-cookie";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -11,6 +10,14 @@ export default function LoginPage() {
   const [passwort, setPasswort] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Prüfen, ob bereits ein Token im localStorage existiert
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      router.push("/studienplan");
+    }
+  }, [router]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -26,7 +33,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         const data = await res.json();
-        Cookies.set("token", data.token, { expires: 30 });
+        localStorage.setItem("token", data.token);  // Token speichern
         router.push("/studienplan");
       } else {
         setError("Login fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.");
