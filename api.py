@@ -33,6 +33,8 @@ TAG_KURZ = {
     "Donnerstag": "Do", "Freitag": "Fr", "Samstag": "Sa", "Sonntag": "So"
 }
 
+TAG_INDEX = {"Mo": 0, "Di": 1, "Mi": 2, "Do": 3, "Fr": 4, "Sa": 5, "So": 6}
+
 WOCHEN = []
 start = date(2026, 4, 20)
 for i in range(13):
@@ -43,18 +45,23 @@ for i in range(13):
         "label": montag.strftime("%d.%m.%Y"),
     })
 
-# Session-Cache: { login: { "session": ..., "tok": ..., "idp": ..., "sec": ..., "kid": ..., "kid_sec_stud": ..., "ts": ... } }
 session_cache: dict = {}
-# Stundenplan-Cache: { "login:woche": { "data": ..., "ts": ... } }
 stundenplan_cache: dict = {}
 
-SESSION_TTL = 60 * 20      # 20 Minuten
-STUNDENPLAN_TTL = 60 * 60  # 1 Stunde
+SESSION_TTL = 60 * 20
+STUNDENPLAN_TTL = 60 * 60
+
 
 class LoginData(BaseModel):
     login: str
     passwort: str
     woche: int = 17
+
+
+class CacheData(BaseModel):
+    login: str
+    passwort: str
+
 
 def get_or_create_session(login: str, passwort: str):
     cached = session_cache.get(login)
@@ -85,11 +92,13 @@ def get_or_create_session(login: str, passwort: str):
     idp = params["IDphp17"][0]
     sec = params["sec18m"][0]
 
-    # kid extrahieren
-    response_ohne_kid = sess.get(STUNDENPLAN_URL, params={
-        "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
-        "area": "Kursraum", "subarea": "studienplan",
-    }, timeout=30)
+    try:
+        response_ohne_kid = sess.get(STUNDENPLAN_URL, params={
+            "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
+            "area": "Kursraum", "subarea": "studienplan",
+        }, timeout=30)
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Fehler beim Abrufen: {str(e)}")
 
     kid_match = re.search(r"kid=(\d+)", response_ohne_kid.text)
     kid_sec_match = re.search(r"kid_sec_stud=(\d+)", response_ohne_kid.text)
@@ -109,7 +118,8 @@ def get_or_create_session(login: str, passwort: str):
     session_cache[login] = entry
     return entry
 
-def parse_stundenplan(html: str, woche: int, label: str):
+
+def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.find_all("table")
     if len(tables) < 5:
@@ -204,17 +214,23 @@ def parse_stundenplan(html: str, woche: int, label: str):
     for v in vorlesungen:
         nach_tag[v["tag"]].append(v)
 
+    # Wochenbeginn für Datumsberechnung
+    wochenbeginn_str = woche_info["datum"].replace("{ts '", "").replace(" 00:00:00'}", "")
+    wochenbeginn = date.fromisoformat(wochenbeginn_str)
+
     return {
         "woche": woche,
         "label": label,
         "tage": [
             {
                 "tag": tag,
+                "datum": (wochenbeginn + timedelta(days=TAG_INDEX[tag])).strftime("%d.%m."),
                 "vorlesungen": sorted(nach_tag.get(tag, []), key=lambda x: x["zeit"])
             }
             for tag in tage_order
         ]
     }
+
 
 def fetch_woche(sess_entry: dict, woche_info: dict):
     cache_key = f"{sess_entry['kid']}:{woche_info['woche']}"
@@ -236,24 +252,11 @@ def fetch_woche(sess_entry: dict, woche_info: dict):
     except Exception:
         return woche_info["woche"], None
 
-    data = parse_stundenplan(response.text, woche_info["woche"], woche_info["label"])
+    data = parse_stundenplan(response.text, woche_info["woche"], woche_info["label"], woche_info)
     if data:
         stundenplan_cache[cache_key] = {"data": data, "ts": time.time()}
     return woche_info["woche"], data
 
-def scrape_alle_wochen(login: str, passwort: str):
-    sess_entry = get_or_create_session(login, passwort)
-
-    # Parallel alle Wochen laden
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(fetch_woche, sess_entry, w): w for w in WOCHEN}
-        results = {}
-        for future in concurrent.futures.as_completed(futures):
-            woche_nr, data = future.result()
-            if data:
-                results[woche_nr] = data
-
-    return results
 
 def scrape_stundenplan(login: str, passwort: str, woche: int):
     woche_info = next((w for w in WOCHEN if w["woche"] == woche), None)
@@ -272,6 +275,7 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
         raise HTTPException(status_code=500, detail="Stundenplan konnte nicht geparst werden")
     return data
 
+
 @app.post("/stundenplan")
 def get_stundenplan(data: LoginData):
     try:
@@ -281,27 +285,53 @@ def get_stundenplan(data: LoginData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Interner Fehler: {str(e)}")
 
+
 @app.post("/alle-wochen")
 def get_alle_wochen(data: LoginData):
     try:
-        return scrape_alle_wochen(data.login, data.passwort)
+        sess_entry = get_or_create_session(data.login, data.passwort)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(fetch_woche, sess_entry, w): w for w in WOCHEN}
+            results = {}
+            for future in concurrent.futures.as_completed(futures):
+                woche_nr, d = future.result()
+                if d:
+                    results[woche_nr] = d
+        return results
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Interner Fehler: {str(e)}")
 
+
+@app.post("/cache-leeren")
+def cache_leeren(data: CacheData):
+    if data.login in session_cache:
+        del session_cache[data.login]
+    stundenplan_cache.clear()
+    return {"status": "ok"}
+
+
 @app.get("/wochen")
 def get_wochen():
     return WOCHEN
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
 @app.options("/stundenplan")
 async def options_stundenplan():
     return {"message": "OK"}
 
+
 @app.options("/alle-wochen")
 async def options_alle_wochen():
+    return {"message": "OK"}
+
+
+@app.options("/cache-leeren")
+async def options_cache_leeren():
     return {"message": "OK"}

@@ -14,6 +14,7 @@ interface Vorlesung {
 
 interface Tag {
   tag: string;
+  datum: string;
   vorlesungen: Vorlesung[];
 }
 
@@ -29,7 +30,6 @@ interface StundenplanResponse {
   tage: Tag[];
 }
 
-// Environment Variable für API URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const TAG_NAMEN: Record<string, string> = {
@@ -56,10 +56,11 @@ export default function StudienplanPage() {
   const [aktuelleWocheInfo, setAktuelleWocheInfo] = useState<Woche | null>(null);
   const [wochenLabel, setWochenLabel] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [reloading, setReloading] = useState(false);
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
 
-    useEffect(() => {
+  useEffect(() => {
     const login = Cookies.get("login");
     const passwort = Cookies.get("passwort");
 
@@ -68,13 +69,10 @@ export default function StudienplanPage() {
       return;
     }
 
-    // Wochen abrufen
     fetch(`${API_URL}/wochen`)
       .then(res => res.json())
       .then(data => {
         setWochen(data);
-        
-        // Aktuelle Kalenderwoche basierend auf Datum bestimmen
         const heute = new Date();
         const aktuelleWocheInfo = data.find((w: Woche) => {
           const wochenStart = new Date(w.label.split(".").reverse().join("-"));
@@ -82,38 +80,29 @@ export default function StudienplanPage() {
           wochenEnde.setDate(wochenEnde.getDate() + 6);
           return heute >= wochenStart && heute <= wochenEnde;
         });
-        
         if (aktuelleWocheInfo) {
           setAktuelleWocheInfo(aktuelleWocheInfo);
           setAktuelleWoche(aktuelleWocheInfo.woche);
         }
       })
-      .catch((err) => {
-        console.error("Konnte Wochen nicht laden:", err);
-        setError("Wochen konnten nicht geladen werden.");
-      });
+      .catch(() => setError("Wochen konnten nicht geladen werden."));
 
     stundenplanLaden(login, passwort, 17);
   }, [router]);
+
   function istHeute(tagKurz: string): boolean {
-    // Nur wenn wir wissen, welche Woche aktuell ist
     if (!aktuelleWocheInfo) return false;
-    
-    // Prüfen, ob die angezeigte Woche die aktuelle Kalenderwoche ist
     if (aktuelleWoche !== aktuelleWocheInfo.woche) return false;
-    
-    // Prüfen, ob der Wochentag mit dem heutigen Datum übereinstimmt
     const heute = new Date();
-    const heutigerWochentag = heute.getDay(); // 0 = Sonntag, 1 = Montag, ...
+    const heutigerWochentag = heute.getDay();
     const tagIndex = TAG_ZU_INDEX[tagKurz];
-    
     return tagIndex === heutigerWochentag;
   }
 
   function stundenplanLaden(login: string, passwort: string, woche: number) {
     setLoading(true);
     setError("");
-    
+
     fetch(`${API_URL}/stundenplan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -129,11 +118,29 @@ export default function StudienplanPage() {
         setWochenLabel(data.label);
         setLoading(false);
       })
-      .catch((err) => {
-        console.error("Fehler beim Laden des Stundenplans:", err);
+      .catch(() => {
         setError("Studienplan konnte nicht geladen werden.");
         setLoading(false);
       });
+  }
+
+  async function handleReload() {
+    const login = Cookies.get("login");
+    const passwort = Cookies.get("passwort");
+    if (!login || !passwort) return;
+
+    setReloading(true);
+    try {
+      await fetch(`${API_URL}/cache-leeren`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login, passwort }),
+      });
+    } catch {
+      // trotzdem neu laden
+    }
+    stundenplanLaden(login, passwort, aktuelleWoche);
+    setReloading(false);
   }
 
   function handleWochenWechsel(woche: number) {
@@ -152,13 +159,9 @@ export default function StudienplanPage() {
   }
 
   function getWochenText(): string {
-    if (aktuelleWoche === 17 && wochenLabel) {
-      return `Woche ${aktuelleWoche} (${wochenLabel})`;
-    }
     const wocheInfo = wochen.find(w => w.woche === aktuelleWoche);
-    if (wocheInfo) {
-      return `Woche ${aktuelleWoche} (${wocheInfo.label})`;
-    }
+    if (wocheInfo) return `Woche ${aktuelleWoche} (${wocheInfo.label})`;
+    if (wochenLabel) return `Woche ${aktuelleWoche} (${wochenLabel})`;
     return `Woche ${aktuelleWoche}`;
   }
 
@@ -191,11 +194,11 @@ export default function StudienplanPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              
+
               {wochenAuswahlOffen && (
                 <>
-                  <div 
-                    className="fixed inset-0 z-10" 
+                  <div
+                    className="fixed inset-0 z-10"
                     onClick={() => setWochenAuswahlOffen(false)}
                   />
                   <div className="absolute top-full left-0 mt-2 w-64 bg-[#1a1d27] border border-white/10 rounded-xl shadow-xl z-20 max-h-96 overflow-y-auto">
@@ -219,18 +222,36 @@ export default function StudienplanPage() {
               )}
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="text-sm text-gray-400 hover:text-white border border-white/10 px-4 py-2 rounded-xl transition"
-          >
-            Abmelden
-          </button>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReload}
+              disabled={reloading}
+              className="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl transition disabled:opacity-50"
+            >
+              <svg
+                className={`w-4 h-4 ${reloading ? "animate-spin" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {reloading ? "Lädt..." : "Aktualisieren"}
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="text-sm text-gray-400 hover:text-white border border-white/10 px-4 py-2 rounded-xl transition"
+            >
+              Abmelden
+            </button>
+          </div>
         </div>
 
         <div className="space-y-4">
-          {studienplan.map(({ tag, vorlesungen }) => {
+          {studienplan.map(({ tag, datum, vorlesungen }) => {
             const istHeuteTag = istHeute(tag);
-            
             return (
               <div
                 key={tag}
@@ -244,6 +265,7 @@ export default function StudienplanPage() {
                   <span className={`text-sm font-semibold ${istHeuteTag ? "text-blue-400" : "text-gray-400"}`}>
                     {TAG_NAMEN[tag]}
                   </span>
+                  <span className="text-sm text-gray-600">{datum}</span>
                   {istHeuteTag && (
                     <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
                       Heute
