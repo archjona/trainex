@@ -63,7 +63,6 @@ export default function StudienplanPage() {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // Nur clientseitig auf localStorage zugreifen
     const storedToken = localStorage.getItem("token");
     setToken(storedToken);
     if (!storedToken) {
@@ -75,7 +74,6 @@ export default function StudienplanPage() {
   useEffect(() => {
     if (!token) return;
 
-    // Wochen laden
     fetch(`${API_URL}/wochen`)
       .then(res => res.json())
       .then(data => {
@@ -119,7 +117,6 @@ export default function StudienplanPage() {
       .then(async res => {
         if (!res.ok) {
           if (res.status === 401) {
-            // Token ungültig → löschen und zurück zum Login
             localStorage.removeItem("token");
             router.push("/");
             throw new Error("Session abgelaufen");
@@ -190,12 +187,13 @@ export default function StudienplanPage() {
 
   return (
     <main className="min-h-screen bg-[#0f1117] text-white">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-
-        <div className="flex items-center justify-between mb-8">
+      {/* Sticky Header */}
+      <div className="sticky top-0 z-10 bg-[#0f1117]/90 backdrop-blur-md border-b border-white/10">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-start gap-4">
+          {/* Linke Seite: Titel + Wochenauswahl */}
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">Studienplan</h1>
-            <div className="relative mt-2">
+            <h1 className="text-xl font-bold">Studienplan</h1>
+            <div className="relative mt-1">
               <button
                 onClick={() => setWochenAuswahlOffen(!wochenAuswahlOffen)}
                 className="text-sm text-gray-400 hover:text-white border border-white/10 px-3 py-1.5 rounded-xl transition flex items-center gap-2 bg-[#1a1d27]"
@@ -234,7 +232,8 @@ export default function StudienplanPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Rechte Seite: Buttons vertikal gestapelt */}
+          <div className="flex flex-col gap-2 items-end shrink-0">
             <button
               onClick={handleReload}
               disabled={reloading}
@@ -259,60 +258,61 @@ export default function StudienplanPage() {
             </button>
           </div>
         </div>
+      </div>
 
-        <div className="space-y-4">
-          {studienplan.map(({ tag, datum, vorlesungen }) => {
-            const istHeuteTag = istHeute(tag);
-            return (
-              <div
-                key={tag}
-                className={`rounded-2xl border transition ${
-                  istHeuteTag
-                    ? "border-blue-500/50 bg-blue-500/5"
-                    : "border-white/10 bg-[#1a1d27]"
-                }`}
-              >
-                <div className="px-5 py-4 flex items-center gap-3">
-                  <span className={`text-sm font-semibold ${istHeuteTag ? "text-blue-400" : "text-gray-400"}`}>
-                    {TAG_NAMEN[tag]}
+      {/* Inhalt */}
+      <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
+        {studienplan.map(({ tag, datum, vorlesungen }) => {
+          const istHeuteTag = istHeute(tag);
+          return (
+            <div
+              key={tag}
+              className={`rounded-2xl border transition ${
+                istHeuteTag
+                  ? "border-blue-500/50 bg-blue-500/5"
+                  : "border-white/10 bg-[#1a1d27]"
+              }`}
+            >
+              <div className="px-5 py-4 flex items-center gap-3">
+                <span className={`text-sm font-semibold ${istHeuteTag ? "text-blue-400" : "text-gray-400"}`}>
+                  {TAG_NAMEN[tag]}
+                </span>
+                <span className="text-sm text-gray-600">{datum}</span>
+                {istHeuteTag && (
+                  <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                    Heute
                   </span>
-                  <span className="text-sm text-gray-600">{datum}</span>
-                  {istHeuteTag && (
-                    <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
-                      Heute
-                    </span>
-                  )}
-                </div>
-
-                {vorlesungen.length === 0 ? (
-                  <div className="px-5 pb-4 text-gray-600 text-sm">Frei</div>
-                ) : (
-                  <div className="px-5 pb-4 space-y-3">
-                    {vorlesungen.map((v, i) => (
-                      <div key={i} className="bg-[#0f1117] rounded-xl p-4 border border-white/5">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <p className="font-medium text-white">{v.fach}</p>
-                            <p className="text-sm text-gray-400 mt-1">{v.dozent}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-sm text-gray-300">{v.zeit}</p>
-                            <p className="text-xs text-gray-500 mt-1">{v.raum}</p>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <span className={`text-xs px-2 py-0.5 rounded-full border ${TYP_FARBEN[v.typ] || TYP_FARBEN["Vorlesung"]}`}>
-                            {v.typ}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 )}
               </div>
-            );
-          })}
-        </div>
+
+              {vorlesungen.length === 0 ? (
+                <div className="px-5 pb-4 text-gray-600 text-sm">Frei</div>
+              ) : (
+                <div className="px-5 pb-4 space-y-3">
+                  {vorlesungen.map((v, i) => (
+                    <div key={i} className="bg-[#0f1117] rounded-xl p-4 border border-white/5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <p className="font-medium text-white">{v.fach}</p>
+                          <p className="text-sm text-gray-400 mt-1">{v.dozent}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm text-gray-300">{v.zeit}</p>
+                          <p className="text-xs text-gray-500 mt-1">{v.raum}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <span className={`text-xs px-2 py-0.5 rounded-full border ${TYP_FARBEN[v.typ] || TYP_FARBEN["Vorlesung"]}`}>
+                          {v.typ}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </main>
   );
