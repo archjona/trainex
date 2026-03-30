@@ -7,15 +7,23 @@ from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
 from datetime import date, timedelta
 import re
+import os
 
 app = FastAPI()
 
+# CORS richtig konfigurieren - erlaube alle für den Test
+# Später kannst du das auf deine spezifische Vercel-URL einschränken
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "*",  # Erlaube alle für den Test
+        "http://localhost:3000",
+        "https://*.vercel.app",  # Erlaube alle Vercel Subdomains
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 LOGIN_URL = "https://trex.phwt.de/phwt-trainex/start.cfm"
@@ -53,12 +61,15 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
         "Referer": "https://trex.phwt.de/phwt-trainex/navigation/TraiNex",
     })
 
-    login_response = session.post(LOGIN_URL, data={
-        "Login": login,
-        "Passwort": passwort,
-        "Domaene": "0",
-        "einloggen": "Anmelden",
-    })
+    try:
+        login_response = session.post(LOGIN_URL, data={
+            "Login": login,
+            "Passwort": passwort,
+            "Domaene": "0",
+            "einloggen": "Anmelden",
+        }, timeout=30)
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Verbindungsfehler: {str(e)}")
 
     params = parse_qs(urlparse(login_response.url).query)
     if "TokCF19" not in params:
@@ -68,16 +79,25 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
     idp = params["IDphp17"][0]
     sec = params["sec18m"][0]
 
-    response = session.get(STUNDENPLAN_URL, params={
-        "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
-        "area": "Kursraum", "subarea": "studienplan",
-        "anf_dat": woche_info["datum"],
-        "kid_sec_stud": "21672750",
-        "kid": "222",
-    })
+    try:
+        response = session.get(STUNDENPLAN_URL, params={
+            "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
+            "area": "Kursraum", "subarea": "studienplan",
+            "anf_dat": woche_info["datum"],
+            "kid_sec_stud": "21672750",
+            "kid": "222",
+        }, timeout=30)
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Fehler beim Abrufen des Stundenplans: {str(e)}")
 
     soup = BeautifulSoup(response.text, "html.parser")
-    table = soup.find_all("table")[4]
+    
+    # Sicherstellen, dass genügend Tabellen vorhanden sind
+    tables = soup.find_all("table")
+    if len(tables) < 5:
+        raise HTTPException(status_code=500, detail="Stundenplan konnte nicht geparst werden")
+    
+    table = tables[4]
 
     tag_spalten = {}
     for row in table.find_all("tr"):
@@ -105,6 +125,8 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
         return 0
 
     def get_tag(cell):
+        if not tag_spalten:
+            return "Mo"  # Fallback
         col_pos = get_col_position(cell)
         spalten = sorted(tag_spalten.keys())
         for i, sp in enumerate(spalten):
@@ -178,7 +200,12 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
 
 @app.post("/stundenplan")
 def get_stundenplan(data: LoginData):
-    return scrape_stundenplan(data.login, data.passwort, data.woche)
+    try:
+        return scrape_stundenplan(data.login, data.passwort, data.woche)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Interner Fehler: {str(e)}")
 
 @app.get("/wochen")
 def get_wochen():
@@ -187,3 +214,8 @@ def get_wochen():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.options("/stundenplan")
+async def options_stundenplan():
+    """Handle OPTIONS requests for CORS preflight"""
+    return {"message": "OK"}
