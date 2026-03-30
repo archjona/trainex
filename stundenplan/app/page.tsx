@@ -3,6 +3,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 
+// Verwende Environment Variable oder fallback auf localhost
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function LoginPage() {
   const router = useRouter();
   const [login, setLogin] = useState("");
@@ -15,20 +18,28 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    const res = await fetch("http://localhost:8000/stundenplan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ login, passwort }),
-    });
+    try {
+      const res = await fetch(`${API_URL}/stundenplan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login, passwort, woche: 17 }), // woche hinzugefügt
+      });
 
-    if (res.ok) {
-      Cookies.set("login", login, { expires: 365 });
-      Cookies.set("passwort", passwort, { expires: 365 });
-      router.push("/studienplan");
-    } else {
-      setError("Login fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.");
+      if (res.ok) {
+        Cookies.set("login", login, { expires: 365 });
+        Cookies.set("passwort", passwort, { expires: 365 });
+        router.push("/studienplan");
+      } else {
+        const errorText = await res.text();
+        console.error("Login failed:", errorText);
+        setError("Login fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.");
+      }
+    } catch (err) {
+      console.error("Network error:", err);
+      setError("Verbindungsfehler. Bitte versuche es später erneut.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (

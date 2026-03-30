@@ -29,6 +29,9 @@ interface StundenplanResponse {
   tage: Tag[];
 }
 
+// Environment Variable für API URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const TAG_NAMEN: Record<string, string> = {
   Mo: "Montag", Di: "Dienstag", Mi: "Mittwoch",
   Do: "Donnerstag", Fr: "Freitag", Sa: "Samstag", So: "Sonntag"
@@ -66,7 +69,7 @@ export default function StudienplanPage() {
     }
 
     // Wochen abrufen
-    fetch("http://localhost:8000/wochen")
+    fetch(`${API_URL}/wochen`)
       .then(res => res.json())
       .then(data => {
         setWochen(data);
@@ -85,7 +88,10 @@ export default function StudienplanPage() {
           setAktuelleWoche(aktuelleWocheInfo.woche);
         }
       })
-      .catch(() => console.error("Konnte Wochen nicht laden"));
+      .catch((err) => {
+        console.error("Konnte Wochen nicht laden:", err);
+        setError("Wochen konnten nicht geladen werden.");
+      });
 
     stundenplanLaden(login, passwort, 17);
   }, [router]);
@@ -109,7 +115,7 @@ export default function StudienplanPage() {
     setLoading(true);
     setError("");
     
-    fetch("http://localhost:8000/stundenplan", {
+    fetch(`${API_URL}/stundenplan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ login, passwort, woche }),
@@ -124,7 +130,8 @@ export default function StudienplanPage() {
         setWochenLabel(data.label);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Fehler beim Laden des Stundenplans:", err);
         setError("Studienplan konnte nicht geladen werden.");
         setLoading(false);
       });
