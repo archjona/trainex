@@ -7,18 +7,15 @@ from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
 from datetime import date, timedelta
 import re
-import os
 
 app = FastAPI()
 
-# CORS richtig konfigurieren - erlaube alle für den Test
-# Später kannst du das auf deine spezifische Vercel-URL einschränken
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "*",  # Erlaube alle für den Test
+        "*",
         "http://localhost:3000",
-        "https://*.vercel.app",  # Erlaube alle Vercel Subdomains
+        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -34,10 +31,9 @@ TAG_KURZ = {
     "Donnerstag": "Do", "Freitag": "Fr", "Samstag": "Sa", "Sonntag": "So"
 }
 
-# Wochen von 17 (20. April) bis 29 (19. Juli)
 WOCHEN = []
 start = date(2026, 4, 20)
-for i in range(13):  # 13 weeks to go from week 17 to week 29
+for i in range(13):
     montag = start + timedelta(weeks=i)
     WOCHEN.append({
         "woche": 17 + i,
@@ -79,24 +75,42 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
     idp = params["IDphp17"][0]
     sec = params["sec18m"][0]
 
+    # Erst ohne kid laden um die Werte zu extrahieren
+    try:
+        response_ohne_kid = session.get(STUNDENPLAN_URL, params={
+            "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
+            "area": "Kursraum", "subarea": "studienplan",
+        }, timeout=30)
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Fehler beim Abrufen des Stundenplans: {str(e)}")
+
+    kid_match = re.search(r"kid=(\d+)", response_ohne_kid.text)
+    kid_sec_match = re.search(r"kid_sec_stud=(\d+)", response_ohne_kid.text)
+
+    if not kid_match or not kid_sec_match:
+        raise HTTPException(status_code=500, detail="kid konnte nicht gefunden werden")
+
+    kid = kid_match.group(1)
+    kid_sec_stud = kid_sec_match.group(1)
+
+    # Jetzt mit kid und Datum laden
     try:
         response = session.get(STUNDENPLAN_URL, params={
             "TokCF19": tok, "IDphp17": idp, "sec18m": sec,
             "area": "Kursraum", "subarea": "studienplan",
             "anf_dat": woche_info["datum"],
-            "kid_sec_stud": "21672750",
-            "kid": "222",
+            "kid_sec_stud": kid_sec_stud,
+            "kid": kid,
         }, timeout=30)
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Fehler beim Abrufen des Stundenplans: {str(e)}")
 
     soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Sicherstellen, dass genügend Tabellen vorhanden sind
+
     tables = soup.find_all("table")
     if len(tables) < 5:
         raise HTTPException(status_code=500, detail="Stundenplan konnte nicht geparst werden")
-    
+
     table = tables[4]
 
     tag_spalten = {}
@@ -126,7 +140,7 @@ def scrape_stundenplan(login: str, passwort: str, woche: int):
 
     def get_tag(cell):
         if not tag_spalten:
-            return "Mo"  # Fallback
+            return "Mo"
         col_pos = get_col_position(cell)
         spalten = sorted(tag_spalten.keys())
         for i, sp in enumerate(spalten):
@@ -217,5 +231,4 @@ def health():
 
 @app.options("/stundenplan")
 async def options_stundenplan():
-    """Handle OPTIONS requests for CORS preflight"""
     return {"message": "OK"}
