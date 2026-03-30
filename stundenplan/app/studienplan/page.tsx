@@ -291,14 +291,15 @@ export default function StudienplanPage() {
                 <div className="px-5 pb-4 space-y-3">
                   {vorlesungen.map((v, i) => (
                     <div key={i} className="bg-[#0f1117] rounded-xl p-4 border border-white/5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <p className="font-medium text-white">{v.fach}</p>
-                          <p className="text-sm text-gray-400 mt-1">{v.dozent}</p>
+                      {/* Hier ist der Fix für den Textüberlauf */}
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-white break-words">{v.fach}</p>
+                          <p className="text-sm text-gray-400 mt-1 break-words">{v.dozent}</p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="text-sm text-gray-300">{v.zeit}</p>
-                          <p className="text-xs text-gray-500 mt-1">{v.raum}</p>
+                          <p className="text-sm text-gray-300 whitespace-nowrap">{v.zeit}</p>
+                          <p className="text-xs text-gray-500 mt-1 whitespace-nowrap">{v.raum}</p>
                         </div>
                       </div>
                       <div className="mt-3">
