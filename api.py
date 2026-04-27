@@ -84,7 +84,6 @@ def get_credentials(token: str):
         raise HTTPException(status_code=401, detail="Ungültiger Token")
     login, passwort, ts = row
     if (time.time() - ts) > TOKEN_TTL:
-        # Token löschen
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("DELETE FROM tokens WHERE token = ?", (token,))
@@ -234,8 +233,6 @@ def parse_stundenplan(html: str, woche: int, label: str, woche_info: dict):
                 dozent = link.get_text(strip=True)
             elif "ressourcen_beschreibung" in onclick:
                 raum_text = link.get_text(separator=" ", strip=True)
-                # Entferne nur Zusätze in Klammern wie "(Hörsaal)" oder "(Vorlesungsraum)"
-                # Aber lasse "Online" und andere virtuelle Räume unberührt
                 raum = re.sub(r'\s*\([^)]*\)', '', raum_text).strip()
                 if not raum:
                     raum = raum_text
@@ -311,9 +308,7 @@ def fetch_woche(sess_entry: dict, woche_info: dict):
 
 @app.post("/login")
 def login(data: LoginRequest):
-    # Erst prüfen ob Login gültig ist
     get_or_create_session(data.login, data.passwort)
-    # Token generieren und speichern
     token = secrets.token_urlsafe(32)
     save_token(token, data.login, data.passwort)
     return {"token": token}
@@ -351,7 +346,31 @@ def cache_leeren(data: CacheData):
 
 @app.get("/wochen")
 def get_wochen():
-    return WOCHEN
+    heute = date.today()
+
+    # Für die Wochenauswahl: Sonntag → nächste Woche anzeigen
+    # "heute" selbst bleibt unverändert, damit die Heute-Markierung im Frontend korrekt bleibt
+    anzeigedatum = heute + timedelta(days=1) if heute.weekday() == 6 else heute
+
+    def parse_wochenbeginn(w):
+        return date.fromisoformat(w["datum"].replace("{ts '", "").replace(" 00:00:00'}", ""))
+
+    aktuelle_woche = None
+    for w in WOCHEN:
+        wochenbeginn = parse_wochenbeginn(w)
+        wochenende = wochenbeginn + timedelta(days=6)
+        if wochenbeginn <= anzeigedatum <= wochenende:
+            aktuelle_woche = w["woche"]
+            break
+
+    # Fallback: vor dem Semester → erste Woche, nach dem Semester → letzte Woche
+    if aktuelle_woche is None:
+        if anzeigedatum < parse_wochenbeginn(WOCHEN[0]):
+            aktuelle_woche = WOCHEN[0]["woche"]
+        else:
+            aktuelle_woche = WOCHEN[-1]["woche"]
+
+    return {"wochen": WOCHEN, "aktuelle_woche": aktuelle_woche}
 
 @app.get("/health")
 def health():

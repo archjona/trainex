@@ -58,7 +58,6 @@ export default function StudienplanPage() {
   const [reloading, setReloading] = useState(false);
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
-
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,7 +65,6 @@ export default function StudienplanPage() {
     setToken(storedToken);
     if (!storedToken) {
       router.push("/");
-      return;
     }
   }, [router]);
 
@@ -81,9 +79,12 @@ export default function StudienplanPage() {
         setWochen(wochenListe);
         const wocheInfo = wochenListe.find(w => w.woche === startwoche) || null;
         setAktuelleWocheInfo(wocheInfo);
-        stundenplanLaden(startwoche);
+        stundenplanLaden(startwoche, token);
       })
-      .catch(() => setError("Wochen konnten nicht geladen werden."));
+      .catch(() => {
+        setError("Wochen konnten nicht geladen werden.");
+        setLoading(false);
+      });
   }, [token]);
 
   function istHeute(tagKurz: string): boolean {
@@ -95,15 +96,16 @@ export default function StudienplanPage() {
     return tagIndex === heutigerWochentag;
   }
 
-  function stundenplanLaden(woche: number) {
-    if (!token) return;
+  function stundenplanLaden(woche: number, tokenParam?: string) {
+    const t = tokenParam ?? token;
+    if (!t) return;
     setLoading(true);
     setError("");
 
     fetch(`${API_URL}/stundenplan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, woche }),
+      body: JSON.stringify({ token: t, woche }),
     })
       .then(async res => {
         if (!res.ok) {
@@ -178,10 +180,8 @@ export default function StudienplanPage() {
 
   return (
     <main className="min-h-screen bg-[#0f1117] text-white">
-      {/* Sticky Header */}
       <div className="sticky top-0 z-10 bg-[#0f1117]/90 backdrop-blur-md border-b border-white/10">
         <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-start gap-4">
-          {/* Linke Seite: Titel + Wochenauswahl */}
           <div className="flex-1">
             <h1 className="text-xl font-bold">Studienplan</h1>
             <div className="relative mt-1">
@@ -223,7 +223,6 @@ export default function StudienplanPage() {
             </div>
           </div>
 
-          {/* Rechte Seite: Buttons vertikal gestapelt */}
           <div className="flex flex-col gap-2 items-end shrink-0">
             <button
               onClick={handleReload}
@@ -251,7 +250,6 @@ export default function StudienplanPage() {
         </div>
       </div>
 
-      {/* Inhalt */}
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
         {studienplan.map(({ tag, datum, vorlesungen }) => {
           const istHeuteTag = istHeute(tag);
