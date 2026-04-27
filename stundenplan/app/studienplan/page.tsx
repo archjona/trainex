@@ -51,7 +51,7 @@ export default function StudienplanPage() {
   const router = useRouter();
   const [studienplan, setStudienplan] = useState<Tag[]>([]);
   const [wochen, setWochen] = useState<Woche[]>([]);
-  const [aktuelleWoche, setAktuelleWoche] = useState<number>(17);
+  const [aktuelleWoche, setAktuelleWoche] = useState<number | null>(null);
   const [aktuelleWocheInfo, setAktuelleWocheInfo] = useState<Woche | null>(null);
   const [wochenLabel, setWochenLabel] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -59,7 +59,6 @@ export default function StudienplanPage() {
   const [error, setError] = useState("");
   const [wochenAuswahlOffen, setWochenAuswahlOffen] = useState(false);
 
-  // Token aus localStorage holen
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,22 +76,14 @@ export default function StudienplanPage() {
     fetch(`${API_URL}/wochen`)
       .then(res => res.json())
       .then(data => {
-        setWochen(data);
-        const heute = new Date();
-        const aktuelleWocheInfo = data.find((w: Woche) => {
-          const wochenStart = new Date(w.label.split(".").reverse().join("-"));
-          const wochenEnde = new Date(wochenStart);
-          wochenEnde.setDate(wochenEnde.getDate() + 6);
-          return heute >= wochenStart && heute <= wochenEnde;
-        });
-        if (aktuelleWocheInfo) {
-          setAktuelleWocheInfo(aktuelleWocheInfo);
-          setAktuelleWoche(aktuelleWocheInfo.woche);
-        }
+        const wochenListe: Woche[] = data.wochen;
+        const startwoche: number = data.aktuelle_woche;
+        setWochen(wochenListe);
+        const wocheInfo = wochenListe.find(w => w.woche === startwoche) || null;
+        setAktuelleWocheInfo(wocheInfo);
+        stundenplanLaden(startwoche);
       })
       .catch(() => setError("Wochen konnten nicht geladen werden."));
-
-    stundenplanLaden(17);
   }, [token]);
 
   function istHeute(tagKurz: string): boolean {
@@ -140,7 +131,7 @@ export default function StudienplanPage() {
   }
 
   async function handleReload() {
-    if (!token) return;
+    if (!token || aktuelleWoche === null) return;
     setReloading(true);
     try {
       await fetch(`${API_URL}/cache-leeren`, {
@@ -291,7 +282,6 @@ export default function StudienplanPage() {
                 <div className="px-5 pb-4 space-y-3">
                   {vorlesungen.map((v, i) => (
                     <div key={i} className="bg-[#0f1117] rounded-xl p-4 border border-white/5">
-                      {/* Hier ist der Fix für den Textüberlauf */}
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-white break-words">{v.fach}</p>
